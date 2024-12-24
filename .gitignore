@@ -1,0 +1,20 @@
+# Node Modules
+node_modules
+
+# PyCache
+__pycache__
+
+# Environmental Variables
+.env
+
+# Local data
+data
+
+# Testing Coverage Files
+coverage
+
+# Testing Coverage Files
+.coverage
+
+# XML files
+*.xml
