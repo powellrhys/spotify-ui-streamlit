@@ -1,0 +1,28 @@
+version: '3.7'
+
+services:
+  nginx:
+    image: nginx:latest
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - app-network
+
+  frontend:
+    image: powellrhys/spotify-frontend:latest
+    networks:
+      - app-network
+
+  backend:
+    image: powellrhys/spotify-backend:latest
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

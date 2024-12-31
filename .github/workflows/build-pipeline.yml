@@ -1,0 +1,238 @@
+name: Build & Deploy Project
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/**
+  pull_request:
+    types:
+      - opened
+
+jobs:
+  lint-pipelines:
+    name: Lint Pipelines
+    runs-on: ubuntu-latest
+    steps:
+      # Check out codebase
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # Setup python
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.9
+
+      # Install dependencies
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r dev_requirements.txt
+
+      # Lint yaml pipelines with yamllint
+      - name: Lint with yamllint
+        run: |
+          yamllint -c .yamllint.yml .
+
+  frontend:
+    name: Lint & Test Frontend
+    needs: lint-pipelines
+    runs-on: ubuntu-latest
+    steps:
+      # Check out codebase
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # Setup python
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.9
+
+      # Install dependencies
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r dev_requirements.txt
+          pip install -r frontend/requirements.txt
+
+      # Lint python codebase with flake8
+      - name: Lint with flake8
+        run: |
+          flake8 frontend --count --show-source --statistics
+
+      # Run tests with pytest
+      - name: Run tests
+        working-directory: ./frontend
+        env:
+          APP_USERNAME: user1
+          APP_PASSWORD: password
+          LOGIN_REQUIRED: 'True'
+          blob_storage_connection_string: ${{ secrets.BLOB_STORAGE_CONNECTION_STRING }}
+        run: |
+          pytest --cov=functions --cov-report=xml --cov-report=term-missing
+
+      # Upload coverage to Codecov
+      - name: Upload coverage to Codecov
+        if: success()
+        uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  backend:
+    name: Lint & Test Backend
+    needs: lint-pipelines
+    runs-on: ubuntu-latest
+    steps:
+      # Check out codebase
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # Set up Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18.17
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      # Install node dependencies
+      - name: Install dependencies
+        working-directory: ./backend
+        run: |
+          npm install
+
+      # Lint Backend
+      - name: Lint Backend
+        run: npx eslint backend
+
+      # Run tests
+      - name: Run tests
+        working-directory: ./backend
+        run: npm test -- --coverage
+
+      # Upload code coverage to codecov
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  build-and-push-backend:
+    needs: backend
+    runs-on: ubuntu-latest
+    name: Build and Push Backend
+    steps:
+      # Checkout code
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      # Login to Docker Hub
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ github.actor }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # Build and push backend image to Docker Hub
+      - name: Build and Push Backend Image
+        run: |
+          docker build -t ${{ github.actor }}/spotify-backend:latest ./backend
+          docker push ${{ github.actor }}/spotify-backend:latest
+
+  build-and-push-frontend:
+    needs: frontend
+    runs-on: ubuntu-latest
+    name: Build and Push Frontend
+    steps:
+      # Checkout code
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      # Login to Docker Hub
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ github.actor }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # Build and push frontend container to docker hub
+      - name: Build and Push Frontend Image
+        run: |
+          docker build -t ${{ github.actor }}/spotify-frontend:latest ./frontend
+          docker push ${{ github.actor }}/spotify-frontend:latest
+
+  restart-backend:
+    name: Restart Backend
+    needs: build-and-push-backend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # Checkout repository
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # Login to Azure
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # Stop the Web App
+      - name: Stop Azure Web App
+        run: |
+          az webapp stop \
+          --name spotify-streamlit-backend \
+          --resource-group ${{ secrets.WEBAPP_RESOURCE_GROUP }}
+
+      # Wait for webapp to stop
+      - name: Wait for webapp to stop
+        run: |
+          sleep 10
+
+      # Start the Web App
+      - name: Stop Azure Web App
+        run: |
+          az webapp start \
+          --name spotify-streamlit-backend \
+          --resource-group ${{ secrets.WEBAPP_RESOURCE_GROUP }}
+
+  restart-frontend:
+    name: Restart Frontend
+    needs: build-and-push-frontend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # Checkout repository
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # Login to Azure
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # Stop the Web App
+      - name: Stop Azure Web App
+        run: |
+          az webapp stop \
+          --name spotify-streamlit-frontend \
+          --resource-group ${{ secrets.WEBAPP_RESOURCE_GROUP }}
+
+      # Wait for webapp to stop
+      - name: Wait for webapp to stop
+        run: |
+          sleep 10
+
+      # Start the Web App
+      - name: Stop Azure Web App
+        run: |
+          az webapp start \
+          --name spotify-streamlit-frontend \
+          --resource-group ${{ secrets.WEBAPP_RESOURCE_GROUP }}
